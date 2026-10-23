@@ -1,0 +1,5 @@
+User-agent: *
+Disallow: /admin/
+Allow: /
+
+Sitemap: https://wewave-website.aymanhesham242.workers.dev/sitemap.xml
