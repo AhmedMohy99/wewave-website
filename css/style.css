@@ -1,0 +1,1251 @@
+/* =========================================================
+   WeWave — fixed-stage scroll choreography
+   Stage colours are driven per-frame from JS via custom
+   properties on :root, so every layer transitions together.
+   ========================================================= */
+
+:root{
+  /* brand palette */
+  --primary:#1F6B45;
+  --dark:#123C2A;
+  --accent:#2E8B57;
+  --light-green:#DDEFE5;
+  --mint:#F1F8F4;
+  --warm:#FAF8F2;
+  --text:#17231D;
+  --text-2:#66736B;
+  --white:#FFFFFF;
+  --deep:#0C2A1C;
+
+  /* live stage tokens (JS writes these) */
+  --bg:#0C2A1C;
+  --ink:#FFFFFF;
+  --dim:rgba(255,255,255,.58);
+  --line:rgba(255,255,255,.16);
+  --glow:#2E8B57;
+
+  --display:'Bebas Neue',Impact,sans-serif;
+  --mono:'DM Mono',ui-monospace,monospace;
+  --sans:'DM Sans',system-ui,sans-serif;
+
+  --ease:cubic-bezier(.22,.61,.36,1);
+  --pad:clamp(20px,4.2vw,64px);
+}
+
+*{margin:0;padding:0;box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  font-family:var(--sans);
+  background:var(--bg);
+  color:var(--ink);
+  overflow-x:hidden;
+  -webkit-font-smoothing:antialiased;
+  transition:background-color .45s linear;
+}
+a{color:inherit;text-decoration:none;}
+li{list-style:none;}
+canvas{display:block;}
+
+/* ---------- Scroll driver ---------- */
+.driver{height:900vh;pointer-events:none;}
+
+/* ---------- Ribbon canvas ---------- */
+#ribbon{
+  position:fixed;inset:0;width:100%;height:100%;
+  z-index:1;pointer-events:none;opacity:.85;
+}
+
+/* =========================================================
+   Loader + intro
+   ========================================================= */
+.loader{
+  position:fixed;inset:0;z-index:900;background:var(--deep);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
+  color:var(--accent);
+  transition:opacity .7s var(--ease),visibility .7s var(--ease);
+}
+.loader.out{opacity:0;visibility:hidden;}
+/* The logo mark is painted as a mask so it inherits the live stage colour
+   instead of being locked to one fill. */
+.mark{
+  display:block;flex:none;
+  background-color:currentColor;
+  -webkit-mask:url(../assets/wewave-mark.png) center/contain no-repeat;
+  mask:url(../assets/wewave-mark.png) center/contain no-repeat;
+}
+.mark-lg{width:74px;height:57px;color:var(--accent);filter:drop-shadow(0 0 16px rgba(46,139,87,.55));}
+.sr-only{
+  position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+  overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;
+}
+.loader-bar{width:min(240px,52vw);height:1px;background:rgba(255,255,255,.16);position:relative;overflow:hidden;}
+.loader-bar span{position:absolute;inset:0 auto 0 0;width:0;background:var(--accent);box-shadow:0 0 10px var(--accent);}
+.loader-pct{font-family:var(--mono);font-size:11px;letter-spacing:.28em;color:rgba(255,255,255,.5);}
+
+.intro{
+  position:fixed;inset:0;z-index:880;background:var(--deep);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  opacity:0;visibility:hidden;
+  transition:opacity .8s var(--ease),visibility .8s var(--ease);
+}
+.intro.on{opacity:1;visibility:visible;}
+.intro-line{overflow:hidden;}
+.intro-line span{
+  display:block;font-family:var(--display);
+  font-size:clamp(30px,6.4vw,74px);letter-spacing:.02em;color:var(--white);
+  transform:translateY(110%);transition:transform 1s var(--ease);
+}
+.intro-line:nth-child(2) span{transition-delay:.13s;}
+.intro.on .intro-line span{transform:translateY(0);}
+.intro-skip{
+  position:absolute;bottom:8vh;left:50%;transform:translateX(-50%);
+  font-family:var(--mono);font-size:10px;letter-spacing:.28em;text-transform:uppercase;
+  color:rgba(255,255,255,.65);background:transparent;
+  border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:9px 22px;cursor:pointer;
+  transition:color .3s,border-color .3s;
+}
+.intro-skip:hover{color:var(--white);border-color:var(--white);}
+
+/* =========================================================
+   Fixed chrome
+   ========================================================= */
+.chrome-top{
+  position:fixed;top:0;left:0;right:0;z-index:300;
+  display:flex;align-items:flex-start;justify-content:space-between;gap:20px;
+  padding:clamp(16px,2.2vw,26px) var(--pad);
+  opacity:0;transform:translateY(-8px);
+  transition:opacity .8s var(--ease),transform .8s var(--ease);
+}
+.chrome-top.on{opacity:1;transform:none;}
+/* "Light in the dark": the mark itself is the light source. A soft halo
+   breathes behind it and fades out as the page moves onto pale stages, where
+   a glow would read as haze rather than light. */
+/* Logo presentation follows the reference: a stacked block — mark above the
+   wordmark — roughly 7% of viewport width, set in from the left edge rather
+   than flush to it. Our own mark and colours, only the treatment matches. */
+.brand{
+  display:flex;flex-direction:column;align-items:center;gap:9px;
+  color:var(--ink);position:relative;
+  margin-left:clamp(0px,4.2vw,58px);
+}
+.brand::before{
+  content:'';position:absolute;left:50%;top:32%;
+  width:132px;height:132px;border-radius:50%;
+  background:radial-gradient(circle,
+    color-mix(in srgb,var(--glow) 52%,transparent) 0%,
+    color-mix(in srgb,var(--glow) 17%,transparent) 45%,
+    transparent 72%);
+  filter:blur(9px);
+  transform:translate(-50%,-50%);
+  animation:lamp 4.2s ease-in-out infinite;
+  pointer-events:none;z-index:-1;
+}
+.brand-mark{width:clamp(58px,6vw,88px);height:auto;aspect-ratio:1.304;color:var(--glow);position:relative;}
+@keyframes lamp{
+  0%,100%{opacity:.42;transform:translate(-50%,-50%) scale(.9);}
+  50%    {opacity:.85;transform:translate(-50%,-50%) scale(1.08);}
+}
+@media (prefers-reduced-motion:reduce){
+  .brand::before{animation:none;opacity:.55;}
+}
+.brand-word{font-family:var(--display);font-size:clamp(19px,1.9vw,26px);letter-spacing:.05em;line-height:1;}
+
+.nav{display:flex;gap:clamp(16px,2.4vw,34px);margin-top:clamp(10px,1.6vw,24px);}
+.nav a{
+  position:relative;font-family:var(--mono);font-size:10.5px;
+  letter-spacing:.2em;text-transform:uppercase;color:var(--dim);
+  transition:color .35s var(--ease);
+}
+.nav a::after{
+  content:'';position:absolute;left:0;bottom:-5px;height:1px;width:0;background:var(--glow);
+  transition:width .4s var(--ease);
+}
+.nav a:hover,.nav a.active{color:var(--ink);}
+.nav a:hover::after,.nav a.active::after{width:100%;}
+
+.pill{
+  margin-top:clamp(8px,1.4vw,20px);
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--ink);border:1px solid var(--line);border-radius:999px;
+  padding:9px 20px;white-space:nowrap;
+  transition:border-color .35s,background-color .35s,color .35s;
+}
+.pill:hover{border-color:var(--glow);background:var(--glow);color:var(--white);}
+
+.burger{margin-top:clamp(8px,1.4vw,18px);display:none;flex-direction:column;gap:5px;background:none;border:0;cursor:pointer;padding:6px;z-index:320;}
+.burger span{width:22px;height:1.5px;background:var(--ink);transition:transform .35s var(--ease),opacity .25s;}
+
+.chrome-bottom{
+  position:fixed;left:0;right:0;bottom:0;z-index:300;
+  display:flex;justify-content:space-between;
+  padding:clamp(14px,2vw,24px) var(--pad);
+  opacity:0;transition:opacity .8s var(--ease);
+}
+.chrome-bottom.on{opacity:1;}
+.chrome-label{font-family:var(--mono);font-size:9.5px;letter-spacing:.26em;text-transform:uppercase;color:var(--dim);}
+
+.progress-rail{
+  position:fixed;top:0;left:0;right:0;height:2px;z-index:310;
+  background:transparent;pointer-events:none;
+}
+.progress-rail span{display:block;height:100%;width:0;background:var(--glow);opacity:.85;}
+
+/* =========================================================
+   Stages
+   ========================================================= */
+.stagewrap{position:fixed;inset:0;z-index:100;pointer-events:none;}
+.stage{
+  position:fixed;inset:0;
+  display:flex;align-items:center;
+  padding:calc(var(--pad) + 104px) var(--pad) calc(var(--pad) + 54px);
+  opacity:0;visibility:hidden;pointer-events:none;
+  will-change:opacity,transform;
+}
+.stage.live{visibility:visible;}
+.stage.active{pointer-events:auto;}
+.stage-inner{width:100%;max-width:1180px;margin:0 auto;}
+.stage-inner.center{text-align:center;display:flex;flex-direction:column;align-items:center;}
+
+/* per-element entrance, driven by .in on the stage */
+[data-anim]{
+  opacity:0;transform:translateY(26px);
+  transition:opacity .85s var(--ease),transform .85s var(--ease);
+  transition-delay:calc(var(--d,0) * 85ms);
+}
+.stage.in [data-anim]{opacity:1;transform:none;}
+
+/* ---------- Typography ---------- */
+.eyebrow{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.3em;
+  text-transform:uppercase;color:var(--glow);margin-bottom:clamp(14px,1.8vw,22px);
+}
+.display{font-family:var(--display);font-weight:400;line-height:.93;letter-spacing:.015em;text-transform:uppercase;}
+.display .ln{display:block;overflow:hidden;}
+.display .ln i{
+  display:block;font-style:normal;
+  transform:translateY(108%);
+  transition:transform 1.05s var(--ease);
+  transition-delay:calc(var(--d,0) * 95ms);
+}
+.stage.in .display .ln i{transform:translateY(0);}
+.xl{font-size:clamp(64px,15vw,190px);}
+.lg{font-size:clamp(40px,7.6vw,104px);}
+.md{font-size:clamp(32px,5.4vw,72px);}
+
+.tagline{
+  font-family:var(--mono);font-size:clamp(10px,1.15vw,13px);
+  letter-spacing:.34em;text-transform:uppercase;color:var(--dim);margin-top:14px;
+}
+.body-copy{
+  font-size:clamp(15px,1.35vw,19px);line-height:1.62;color:var(--ink);
+  max-width:56ch;margin-top:clamp(16px,2vw,26px);
+}
+.body-copy.dim{color:var(--dim);}
+.center-copy{max-width:52ch;margin-left:auto;margin-right:auto;}
+
+/* ---------- Statistics ----------
+   A quiet instrument panel rather than four text blocks: a hairline rule with
+   measurement ticks, indexed columns divided by hairlines, condensed figures
+   carrying a faint green bloom, and one line that sweeps the rule as the
+   section arrives. Everything is built from tokens already in the page
+   (--display, --mono, --glow, --line, --dim) and scoped to .stats, so no other
+   component is affected. */
+.stats{
+  position:relative;
+  display:grid;grid-template-columns:repeat(4,1fr);
+  gap:clamp(14px,1.8vw,28px);
+  margin-top:clamp(22px,2.6vw,36px);
+  padding-top:clamp(16px,1.9vw,24px);
+  border-top:1px solid var(--line);
+}
+
+/* One pass along the rule when the stage arrives -- a transform and an
+   opacity, once, not a loop. */
+.stats::after{
+  content:'';position:absolute;left:0;top:-1px;height:1px;width:100%;
+  background:linear-gradient(90deg,transparent,var(--glow),transparent);
+  opacity:0;transform:scaleX(0);transform-origin:left;pointer-events:none;
+}
+.stage.in .stats::after{animation:statSweep 1.4s var(--ease) .2s 1 both;}
+@keyframes statSweep{
+  0%{opacity:0;transform:scaleX(0);}
+  30%{opacity:.9;}
+  100%{opacity:0;transform:scaleX(1);}
+}
+
+.stat{position:relative;padding-left:clamp(10px,1vw,18px);}
+.stat + .stat{border-left:1px solid var(--line);}
+/* measurement tick hanging from the rule at the head of each column */
+.stat::before{
+  content:'';position:absolute;left:0;top:calc(clamp(16px,1.9vw,24px) * -1);
+  width:1px;height:clamp(7px,.8vw,11px);
+  background:var(--glow);opacity:.6;
+}
+
+.stat-i{
+  display:block;
+  font-family:var(--mono);font-size:9px;letter-spacing:.26em;
+  color:var(--glow);opacity:.7;
+  margin-bottom:clamp(4px,.6vw,8px);
+}
+.stat-n{
+  display:block;white-space:nowrap;
+  font-family:var(--display);font-weight:400;
+  font-size:clamp(28px,3.2vw,46px);line-height:.95;letter-spacing:.015em;
+  color:var(--ink);
+  /* the figures change width as they count; tabular digits stop the jitter,
+     and the grid fixes the column width so nothing reflows */
+  font-variant-numeric:tabular-nums;
+  text-shadow:0 0 22px color-mix(in srgb,var(--glow) 24%,transparent);
+}
+.stat-l{
+  display:block;margin-top:clamp(6px,.8vw,10px);
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--dim);line-height:1.35;
+}
+
+/* Two-up on phones -- the placement that already works, kept as it was. The
+   divider moves to the second column of each row. */
+@media (max-width:900px){
+  .stats{grid-template-columns:repeat(2,1fr);}
+  .stat + .stat{border-left:0;}
+  .stat:nth-child(2n){border-left:1px solid var(--line);}
+  .stat:nth-child(n+3)::before{display:none;}
+}
+/* Short phones. The manifesto is the tallest stage and the fixed bottom bar
+   starts at 600 on a 640px screen, so the second row of labels ran underneath
+   it. Drop the index line and tighten just enough to clear. */
+@media (max-width:900px) and (max-height:700px){
+  .stats{margin-top:6px;padding-top:6px;gap:4px;}
+  .stat-i{display:none;}
+  .stat-n{font-size:22px;}
+  .stat-l{margin-top:2px;font-size:8.5px;letter-spacing:.16em;line-height:1.2;}
+  .stat{padding-left:8px;}
+  .stat::before{height:6px;}
+}
+/* Laptops and 1080p windows. The stage travels +/-38px as it enters and
+   leaves, so at lp~0.2 it is fully opaque while still sitting ~36px low --
+   the block needs that much clearance above the bottom bar at rest, not
+   merely a fit. Tall monitors keep the larger figures. */
+@media (min-width:901px) and (max-height:900px){
+  .stats{margin-top:14px;padding-top:12px;}
+  .stat-n{font-size:34px;}
+  .stat-i{margin-bottom:3px;}
+  .stat-l{margin-top:6px;}
+}
+/* Very short desktop windows (a 768px laptop, or 1080p with browser chrome).
+   Stacked, the block costs ~108px; the stage is centred, so half of that is
+   pushed into the top bar as the section leaves. Laid out as a readout -- the
+   figure with its label alongside -- it costs less than half that and both
+   ends stay clear. */
+@media (min-width:901px) and (max-height:800px){
+  .stats{margin-top:12px;padding-top:12px;}
+  .stat{display:flex;align-items:baseline;gap:10px;}
+  .stat-i{display:none;}
+  .stat-n{font-size:30px;}
+  .stat-l{margin-top:0;font-size:9px;letter-spacing:.16em;line-height:1.25;}
+}
+/* 720px-tall windows. The manifesto is cramped here even without the figures
+   (22px of head clearance on exit), so the block is pared back to the minimum
+   that still reads. */
+@media (min-width:901px) and (max-height:740px){
+  .stats{margin-top:8px;padding-top:8px;}
+  .stat-n{font-size:28px;}
+  .stat-l{font-size:8.5px;}
+}
+@media (prefers-reduced-motion:reduce){
+  .stage.in .stats::after{animation:none;}
+}
+
+.scroll-hint{
+  display:flex;align-items:center;gap:11px;margin-top:clamp(34px,5vw,64px);
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.28em;text-transform:uppercase;color:var(--dim);
+}
+.hint-rail{display:block;width:1px;height:34px;background:var(--line);position:relative;overflow:hidden;}
+.hint-rail em{position:absolute;inset:0;background:var(--glow);animation:railrun 2s var(--ease) infinite;}
+@keyframes railrun{
+  0%{transform:translateY(-100%);}
+  55%{transform:translateY(0);}
+  100%{transform:translateY(100%);}
+}
+
+/* ---------- Hero CTA ----------
+   pointer-events is explicit because the hero copy layer is transparent to
+   pointers on mobile (so touches reach the bulb behind it) — without this the
+   button would be unclickable there. */
+.hero-cta{
+  pointer-events:auto;
+  margin-top:clamp(18px,2.4vw,30px);
+  align-self:flex-start;
+  font-family:var(--mono);font-size:clamp(10px,1.05vw,11.5px);
+  letter-spacing:.2em;text-transform:uppercase;
+  color:var(--white);background:var(--glow);
+  border:1px solid var(--glow);border-radius:999px;
+  padding:14px 30px;white-space:nowrap;
+  transition:transform .35s var(--ease),box-shadow .35s var(--ease),
+             background-color .3s,color .3s;
+}
+.hero-cta:hover{
+  transform:translateY(-3px);
+  box-shadow:0 14px 30px color-mix(in srgb,var(--glow) 38%,transparent);
+}
+.hero-cta:focus-visible{outline:2px solid var(--ink);outline-offset:3px;}
+.stage-inner.center .hero-cta{align-self:center;}
+
+/* ---------- Hero lamp ----------
+   A hanging object: .lamp-swing pivots from the cord anchor and is driven by
+   a damped-spring pendulum in JS. Everything animated here is transform or
+   opacity only, so it stays on the compositor.
+   Brightness rides one custom property (--lit, 0..1) that JS writes each
+   frame; every light layer reads from it, so the whole fixture brightens and
+   dims as one lamp rather than as separate effects. */
+.hero-lamp{
+  position:absolute;z-index:2;pointer-events:none;
+  right:clamp(-14px,1.5vw,44px);
+  top:-2%;height:100%;
+  width:clamp(230px,29vw,430px);
+  /* Incandescent light is warm, so the bulb keeps its own amber rather than
+     inheriting the page's green. The green environment then picks up a warm
+     wash from it, which is what makes it read as a light source in the room. */
+  --bulb-warm:#FFB84D;
+  --bulb-hot:#FFD98A;
+  --lit:0;
+  opacity:0;transition:opacity .9s var(--ease) .35s;
+}
+.stage.in .hero-lamp{opacity:1;}
+
+.lamp-swing{
+  position:absolute;inset:0;
+  transform-origin:50% 0;          /* pivot at the cord anchor */
+  will-change:transform;
+}
+.lamp-cord{
+  position:absolute;left:50%;top:0;width:2px;height:15%;
+  transform:translateX(-50%);
+  background:linear-gradient(180deg,
+    color-mix(in srgb,var(--ink) 16%,transparent),
+    color-mix(in srgb,var(--ink) 40%,transparent));
+}
+.lamp-body{
+  position:absolute;left:50%;top:15%;width:100%;
+  transform:translateX(-50%);
+  will-change:transform;
+  /* the only part of the lamp that takes the cursor */
+  pointer-events:auto;cursor:pointer;
+}
+.bulb{
+  width:100%;height:auto;display:block;position:relative;z-index:2;
+  filter:drop-shadow(0 30px 44px rgba(0,0,0,.45));
+}
+
+/* --- light layers, tightest first --- */
+.lamp-core,.lamp-halo,.lamp-cast{position:absolute;pointer-events:none;}
+.lamp-core{
+  left:50%;top:27%;width:66%;aspect-ratio:1;
+  transform:translate(-50%,-50%) scale(calc(.88 + var(--lit) * .2));
+  background:radial-gradient(circle,
+    color-mix(in srgb,var(--bulb-hot) 72%,transparent) 0%,
+    color-mix(in srgb,var(--bulb-warm) 34%,transparent) 40%,
+    transparent 70%);
+  filter:blur(14px);
+  opacity:calc(var(--lit) * .95);
+  z-index:1;
+}
+.lamp-halo{                        /* ambient falloff into the page */
+  left:50%;top:27%;width:190%;aspect-ratio:1;
+  transform:translate(-50%,-50%) scale(calc(.92 + var(--lit) * .14));
+  background:radial-gradient(circle,
+    color-mix(in srgb,var(--bulb-warm) 22%,transparent) 0%,
+    color-mix(in srgb,var(--bulb-warm) 10%,transparent) 26%,
+    color-mix(in srgb,var(--bulb-warm) 4%,transparent) 48%,
+    transparent 70%);
+  filter:blur(30px);
+  opacity:calc(var(--lit) * .8);
+}
+.lamp-cast{                        /* warm wash thrown onto the section */
+  left:50%;top:30%;width:170%;height:150%;
+  transform:translateX(-50%) scaleY(calc(.9 + var(--lit) * .18));
+  transform-origin:50% 0;
+  background:radial-gradient(ellipse 48% 60% at 50% 0%,
+    color-mix(in srgb,var(--bulb-warm) 15%,transparent) 0%,
+    color-mix(in srgb,var(--bulb-warm) 5%,transparent) 40%,
+    transparent 74%);
+  filter:blur(34px);
+  opacity:calc(var(--lit) * .6);
+}
+
+/* Glass, filament and reflections all read from --lit, so raising brightness
+   lifts the whole fixture the way a dimmer does — not a colour switching. */
+.b-fill{opacity:calc(.34 + var(--lit) * .62);}
+.b-bloom{opacity:calc(var(--lit) * .72);}
+.b-wave{opacity:calc(.16 + var(--lit) * .74);}
+.b-wave-mid{opacity:calc(.2 + var(--lit) * .68);}
+.b-coil{opacity:calc(.14 + var(--lit) * .5);}
+.b-inner{opacity:calc(.05 + var(--lit) * .18);}
+.b-wave-core{
+  opacity:calc(.3 + var(--lit) * .7);
+  /* no bloom at rest — the drop-shadow only grows once it is lit */
+  filter:drop-shadow(0 0 calc(var(--lit) * 13px) #FFD98A);
+}
+.b-wire,.b-stem{opacity:calc(.34 + var(--lit) * .3);}
+.b-spec{opacity:calc(.16 + var(--lit) * .3);}
+.b-spec2{opacity:calc(.08 + var(--lit) * .18);}
+.b-spec3{opacity:calc(.12 + var(--lit) * .22);}
+.b-rim{opacity:calc(.55 + var(--lit) * .45);}
+.b-rim2{opacity:calc(.4 + var(--lit) * .5);}
+
+@media (prefers-reduced-motion:reduce){
+  .hero-lamp{opacity:1;transition:none;--lit:.72;}
+  .lamp-swing,.lamp-body{transform:none!important;}
+}
+
+/* ---------- Services rail ---------- */
+.stage-services{flex-direction:column;justify-content:center;align-items:flex-start;}
+.stage-head{width:100%;max-width:1180px;margin:0 auto clamp(24px,3.4vw,44px);}
+.rail{
+  display:flex;gap:clamp(14px,1.5vw,22px);
+  padding-left:max(var(--pad),calc((100vw - 1180px) / 2));
+  will-change:transform;
+  /* Vertical drags stay with the browser so the page scrolls as it always has;
+     sideways ones are left for the swipe handler in js/main.js. */
+  touch-action:pan-y;
+}
+.scard{
+  flex:0 0 clamp(248px,26vw,330px);
+  border-radius:16px;
+  padding:clamp(22px,2.4vw,32px);
+  /* A real surface rather than a 4% tint of the ink. On the cream ground of
+     this stage a card has to be lighter than what it sits on, or it reads as
+     a rectangle of text rather than something you can pick up. */
+  background:linear-gradient(180deg,
+    color-mix(in srgb,#FFFFFF 72%,transparent),
+    color-mix(in srgb,#FFFFFF 46%,transparent));
+  border:1px solid color-mix(in srgb,var(--ink) 11%,transparent);
+  box-shadow:
+    0 1px 2px color-mix(in srgb,var(--deep) 5%,transparent),
+    0 14px 30px -22px color-mix(in srgb,var(--deep) 42%,transparent);
+  transition:
+    border-color .45s var(--ease),
+    translate .5s var(--ease),
+    scale .5s var(--ease),
+    box-shadow .5s var(--ease),
+    background-color .45s var(--ease);
+  position:relative;overflow:hidden;isolation:isolate;
+  font:inherit;color:inherit;text-align:left;cursor:pointer;
+  text-decoration:none;
+  display:flex;flex-direction:column;align-items:flex-start;
+  min-height:clamp(250px,25vw,300px);
+}
+
+/* the accent rule across the top: the card's one piece of chrome, and the
+   fastest signal that something happens when you touch it */
+.scard::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:3px;z-index:2;
+  background:linear-gradient(90deg,var(--glow),color-mix(in srgb,var(--glow) 35%,transparent));
+  transform:scaleX(0);transform-origin:left;
+  transition:transform .55s var(--ease);
+  pointer-events:none;
+}
+.scard:hover::before,
+.scard:focus-visible::before,
+.scard.is-active::before{transform:scaleX(1);}
+
+/* The lift uses `translate`, not `transform`, on purpose. These cards carry
+   `data-anim` for the entrance, and `.stage.in [data-anim]{transform:none}`
+   has higher specificity than `.scard:hover` -- so a transform here is
+   silently cancelled once the stage has settled. `translate` is its own
+   property and composes with the entrance instead of fighting it. */
+.scard:hover,
+.scard.is-active{
+  translate:0 -10px;
+  border-color:color-mix(in srgb,var(--glow) 46%,transparent);
+  box-shadow:
+    0 2px 4px color-mix(in srgb,var(--deep) 7%,transparent),
+    0 30px 56px -30px color-mix(in srgb,var(--deep) 60%,transparent);
+}
+.scard:focus-visible{outline:2px solid var(--glow);outline-offset:4px;}
+/* a pressed state for touch, where there is no hover to lean on */
+.scard:active{translate:0 -4px;scale:.994;}
+
+/* ---------- the number, as an editorial accent ---------- */
+
+.scard-num{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.24em;
+  color:var(--glow);
+  display:inline-flex;align-items:center;gap:10px;
+}
+.scard-num::after{
+  content:'';width:22px;height:1px;
+  background:color-mix(in srgb,var(--glow) 55%,transparent);
+  transition:width .5s var(--ease);
+}
+.scard:hover .scard-num::after,
+.scard.is-active .scard-num::after{width:38px;}
+
+/* ---------- type ---------- */
+
+.scard h3{
+  font-family:var(--display);font-weight:400;text-transform:uppercase;
+  letter-spacing:.015em;
+  font-size:clamp(21px,2.25vw,29px);line-height:1.08;
+  margin:15px 0 11px;
+  color:var(--ink);
+  /* long titles break between words, never mid-word */
+  overflow-wrap:break-word;hyphens:none;
+}
+.scard p{
+  font-size:13.8px;line-height:1.62;
+  /* was --dim, which on the cream ground sat too close to the background to
+     read comfortably at this size */
+  color:color-mix(in srgb,var(--ink) 74%,transparent);
+  margin:0;
+}
+
+/* ---------- the action: the point of the whole card ---------- */
+
+.scard-go{
+  margin-top:auto;padding-top:20px;
+  display:inline-flex;align-items:center;gap:11px;
+  font-family:var(--mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--glow);
+  /* Always visible. It used to sit at .75 opacity and only come up on hover,
+     which meant a visitor who never hovered never learned the card was a
+     link -- and on a phone, nobody hovers. */
+  opacity:1;
+}
+.scard-go-arrow{
+  width:28px;height:28px;border-radius:50%;flex:0 0 28px;
+  display:inline-flex;align-items:center;justify-content:center;
+  border:1px solid color-mix(in srgb,var(--glow) 42%,transparent);
+  background:color-mix(in srgb,var(--glow) 8%,transparent);
+  transition:background-color .4s var(--ease),border-color .4s var(--ease),
+             transform .45s var(--ease);
+}
+.scard-go-arrow svg{width:13px;height:13px;transition:transform .45s var(--ease);}
+.scard:hover .scard-go-arrow,
+.scard:focus-visible .scard-go-arrow,
+.scard.is-active .scard-go-arrow{
+  background:var(--glow);border-color:var(--glow);
+  transform:translateX(4px);
+}
+.scard:hover .scard-go-arrow svg,
+.scard:focus-visible .scard-go-arrow svg,
+.scard.is-active .scard-go-arrow svg{color:var(--bg);transform:translateX(1px);}
+
+/* ---------- the decorative mark ---------- */
+
+.scard-art{
+  position:absolute;right:-12px;bottom:-14px;z-index:-1;
+  width:clamp(116px,11.5vw,156px);height:auto;
+  color:var(--glow);opacity:.17;
+  transition:opacity .45s var(--ease),transform .6s var(--ease);
+  pointer-events:none;
+}
+.scard:hover .scard-art,
+.scard.is-active .scard-art{opacity:.3;transform:translate(-6px,-6px) rotate(-5deg);}
+
+/* ---------- the photograph, revealed on hover ---------- */
+
+/* --shot is set per card by css/service-shots.css, and only for slugs whose
+   file actually exists, so this never requests a missing image. */
+.scard-shot{
+  content:'';position:absolute;inset:0;z-index:-3;
+  background-image:var(--shot);background-size:cover;background-position:center;
+  /* Lightened and softened, not darkened. The photograph is atmosphere
+     behind dark type, so it has to sit back -- web-development's shot is a
+     dark code screen and at full contrast it swallowed the body copy. */
+  filter:saturate(1.05) contrast(.96) brightness(1.08) blur(3px);
+  opacity:0;transform:scale(1.07);
+  transition:opacity .55s var(--ease),transform .9s var(--ease);
+  pointer-events:none;
+}
+/* A cream scrim, not a dark one: the type on this card is dark, so the
+   photograph has to be lightened under it rather than dimmed. */
+.scard::after{
+  content:'';position:absolute;inset:0;z-index:-2;
+  background:
+    linear-gradient(168deg,
+      color-mix(in srgb,var(--bg) 78%,transparent) 0%,
+      color-mix(in srgb,var(--bg) 88%,transparent) 46%,
+      color-mix(in srgb,var(--bg) 95%,transparent) 100%),
+    linear-gradient(205deg, transparent 40%,
+      color-mix(in srgb,var(--glow) 16%,transparent) 100%);
+  opacity:0;transition:opacity .55s var(--ease);
+  pointer-events:none;
+}
+.scard:hover .scard-shot,
+.scard:focus-visible .scard-shot,
+.scard.is-active .scard-shot{opacity:1;transform:scale(1);}
+.scard:hover::after,
+.scard:focus-visible::after,
+.scard.is-active::after{opacity:1;}
+
+
+/* ---------- Process ---------- */
+.steps{
+  margin-top:clamp(26px,3.6vw,48px);
+  max-width:780px;
+  /* a grid rather than stacked list items, so the row gap is one number the
+     connecting spine below can bridge exactly */
+  display:grid;
+  gap:clamp(20px,2.6vw,36px);
+  --step-dot:42px;
+  --step-gap:clamp(20px,2.6vw,36px);
+}
+.steps li{
+  position:relative;
+  display:grid;
+  grid-template-columns:var(--step-dot) 1fr;
+  gap:0 clamp(18px,2.4vw,32px);
+  align-items:start;
+  /* was a hairline between every row; the spine carries the rhythm now */
+  border-top:0;
+  padding:0;
+  opacity:.34;
+  translate:-8px 0;
+  transition:opacity .6s var(--ease),translate .6s var(--ease);
+}
+.steps li.on{opacity:1;translate:none;}
+
+/* ---------- the spine ---------- */
+
+/* One segment per step, reaching down through the row gap to the next
+   marker, so five separate elements read as one continuous line. The last
+   step has nothing below it to reach. */
+.steps li::before{
+  content:'';position:absolute;z-index:0;
+  left:calc(var(--step-dot) / 2);
+  translate:-50% 0;
+  top:var(--step-dot);
+  bottom:calc(-1 * var(--step-gap));
+  width:1px;
+  background:color-mix(in srgb,var(--ink) 16%,transparent);
+  transition:background-color .6s var(--ease);
+}
+.steps li:last-child::before{display:none;}
+.steps li.on::before{background:color-mix(in srgb,var(--glow) 42%,transparent);}
+
+/* ---------- the marker ---------- */
+
+.step-n{
+  position:relative;z-index:1;
+  width:var(--step-dot);height:var(--step-dot);
+  border-radius:50%;
+  display:grid;place-items:center;
+  font-family:var(--mono);font-size:11px;letter-spacing:.14em;
+  /* sits on its own ground so the spine passes behind, not through */
+  background:var(--bg);
+  border:1px solid color-mix(in srgb,var(--ink) 18%,transparent);
+  color:color-mix(in srgb,var(--ink) 55%,transparent);
+  padding-top:0;flex:none;
+  transition:border-color .5s var(--ease),color .5s var(--ease),
+             background-color .5s var(--ease),box-shadow .5s var(--ease);
+}
+.steps li.on .step-n{
+  border-color:var(--glow);
+  color:var(--glow);
+  background:color-mix(in srgb,var(--glow) 9%,var(--bg));
+  box-shadow:0 0 0 4px color-mix(in srgb,var(--glow) 10%,transparent);
+}
+
+/* ---------- type ---------- */
+
+.steps h3{
+  font-family:var(--display);font-weight:400;text-transform:uppercase;
+  font-size:clamp(21px,2.5vw,32px);line-height:1.06;
+  margin:0 0 8px;letter-spacing:.02em;
+  /* lines the cap height up with the centre of the marker beside it */
+  padding-top:4px;
+}
+/* Five steps plus a heading is taller than a short laptop viewport. The
+   stage centres its content, so anything taller than the box overflows both
+   ways -- the heading slid up behind the fixed brand mark and the last two
+   steps fell below the fold. Compress rather than clip. */
+@media (max-height:820px) and (min-width:760px){
+  .steps{gap:clamp(12px,1.4vw,18px);--step-dot:34px;margin-top:clamp(16px,2vw,26px);}
+  .steps h3{font-size:clamp(18px,1.9vw,23px);margin-bottom:5px;padding-top:2px;}
+  .steps p{font-size:13px;line-height:1.5;}
+}
+@media (max-height:680px) and (min-width:760px){
+  .steps{gap:8px;--step-dot:30px;margin-top:12px;}
+  .steps h3{font-size:18px;margin-bottom:3px;}
+  .steps p{font-size:12.5px;line-height:1.42;}
+}
+@media (max-height:600px) and (min-width:760px){
+  /* the floor: below this the copy would stop being readable, so the
+     description drops to one line and the heading carries the step */
+  .steps{gap:6px;--step-dot:28px;margin-top:8px;}
+  .steps h3{font-size:17px;margin-bottom:2px;}
+  .steps p{font-size:12px;line-height:1.38;}
+}
+
+.steps p{
+  font-size:14.5px;line-height:1.65;
+  /* was --dim, the same wash that made the service card copy hard to read
+     on this cream ground */
+  color:color-mix(in srgb,var(--ink) 72%,transparent);
+  max-width:52ch;
+  margin:0;
+}
+
+/* ---------- Clients ticker ---------- */
+.ticker{
+  width:100vw;margin:clamp(26px,3.6vw,46px) 0 0;
+  display:flex;flex-direction:column;gap:clamp(10px,1.3vw,20px);
+  -webkit-mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent);
+  mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent);
+}
+.ticker-row{display:flex;gap:clamp(10px,1.3vw,20px);width:max-content;will-change:transform;}
+/* Logos sit on light chips: the marks are supplied on white and several are
+   gold, silver or pale, which would vanish against the dark stage. Painted as
+   backgrounds rather than <img> so each logo is fetched once however many
+   times it repeats, and the chips have their size before any image decodes
+   (the drift measures the row width). */
+.chip{
+  flex:none;display:block;
+  width:clamp(128px,13vw,178px);
+  height:clamp(84px,8.4vw,116px);
+  /* The padding is the logo box. `background-origin:content-box` makes the
+     background fit inside it, so `contain` gives every mark the same maximum
+     area on its own aspect ratio -- a 4:1 wordmark and a square mark both sit
+     naturally, neither stretched nor clipped. `background-clip` stays at its
+     default, so the white card still fills the whole chip. */
+  padding:clamp(9px,.95vw,13px) clamp(12px,1.25vw,17px);
+  border-radius:14px;
+  background-color:var(--white);
+  background-repeat:no-repeat;
+  background-position:center;
+  background-origin:content-box;
+  background-size:contain;
+  transition:transform .45s var(--ease),box-shadow .4s var(--ease);
+}
+.chip:hover{transform:translateY(-5px);box-shadow:0 16px 32px rgba(0,0,0,.28);}
+/* Each logo twice: the plain url() is what a browser without image-set()
+   takes, and image-set() hands everything else the WebP. The WebP is a
+   lossless re-encode -- byte-for-byte the same pixels, 24% smaller -- so
+   which one a visitor gets cannot change how a logo looks. */
+.chip.arlux{background-image:url(../assets/clients/arlux.png);}
+.chip.nasaq{background-image:url(../assets/clients/nasaq.png);}
+.chip.zoya{background-image:url(../assets/clients/zoya.png);}
+.chip.royal{background-image:url(../assets/clients/royal-watch.png);}
+.chip.mewa{background-image:url(../assets/clients/mewa.png);}
+.chip.zrex{background-image:url(../assets/clients/z-rex.png);}
+.chip.valle{background-image:url(../assets/clients/valle.png);}
+.chip.smart24{background-image:url(../assets/clients/twentyfour-smart.png);}
+.chip.arlux{background-image:image-set(url(../assets/clients/arlux.webp) type("image/webp"),url(../assets/clients/arlux.png) type("image/png"));}
+.chip.nasaq{background-image:image-set(url(../assets/clients/nasaq.webp) type("image/webp"),url(../assets/clients/nasaq.png) type("image/png"));}
+.chip.zoya{background-image:image-set(url(../assets/clients/zoya.webp) type("image/webp"),url(../assets/clients/zoya.png) type("image/png"));}
+.chip.royal{background-image:image-set(url(../assets/clients/royal-watch.webp) type("image/webp"),url(../assets/clients/royal-watch.png) type("image/png"));}
+.chip.mewa{background-image:image-set(url(../assets/clients/mewa.webp) type("image/webp"),url(../assets/clients/mewa.png) type("image/png"));}
+.chip.zrex{background-image:image-set(url(../assets/clients/z-rex.webp) type("image/webp"),url(../assets/clients/z-rex.png) type("image/png"));}
+.chip.valle{background-image:image-set(url(../assets/clients/valle.webp) type("image/webp"),url(../assets/clients/valle.png) type("image/png"));}
+.chip.smart24{background-image:image-set(url(../assets/clients/twentyfour-smart.webp) type("image/webp"),url(../assets/clients/twentyfour-smart.png) type("image/png"));}
+
+/* ---------- Voices ---------- */
+/* Two cards, held to the width three used to have. Letting a pair stretch the
+   full stage would give each one a lot of empty board for one line of copy and
+   a player, so the grid is capped and stays left-aligned under the eyebrow. */
+.quotes{
+  display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:clamp(14px,1.6vw,24px);margin-top:clamp(24px,3.2vw,42px);
+  max-width:786px;
+}
+.quotes blockquote{
+  border:1px solid var(--line);border-radius:14px;
+  padding:clamp(20px,2.2vw,30px);
+  display:flex;flex-direction:column;justify-content:space-between;gap:20px;
+  transition:border-color .4s,transform .5s var(--ease);
+}
+.quotes blockquote:hover{border-color:var(--glow);transform:translateY(-6px);}
+.quotes p{font-size:15px;line-height:1.6;}
+.quotes cite{
+  font-family:var(--mono);font-style:normal;font-size:10px;
+  letter-spacing:.22em;text-transform:uppercase;color:var(--glow);
+}
+/* The name is the part people actually want to read. It steps out of the mono
+   label into the body face at full ink, so it carries the line while the role
+   stays a quiet green label beside it. */
+.quotes cite .who{
+  font-family:var(--sans);font-weight:500;font-size:16px;
+  letter-spacing:.005em;text-transform:none;color:var(--ink);
+}
+
+/* Voice-note testimonial — sits inside a .quotes blockquote */
+.voice-head{display:flex;align-items:center;gap:14px;}
+.voice-play{
+  flex:0 0 44px;width:44px;height:44px;border-radius:999px;
+  display:grid;place-items:center;
+  background:var(--glow);color:var(--white);border:1px solid var(--glow);
+  transition:transform .35s var(--ease),box-shadow .35s;
+}
+.voice-play:hover{transform:translateY(-2px);box-shadow:0 10px 26px rgba(46,139,87,.32);}
+.voice-play svg{width:20px;height:20px;}
+.voice-play .vi-pause{display:none;}
+.voice.is-playing .voice-play .vi-play{display:none;}
+.voice.is-playing .voice-play .vi-pause{display:block;}
+.voice-meter{flex:1 1 auto;display:flex;align-items:center;gap:10px;min-width:0;}
+.voice-bar{
+  flex:1 1 auto;height:3px;border-radius:999px;
+  background:var(--line);overflow:hidden;
+}
+.voice-fill{display:block;height:100%;width:0;background:var(--glow);}
+.voice-time{
+  font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+  color:var(--glow);flex:0 0 auto;
+}
+.voice.is-loading .voice-time{opacity:.5;}
+
+/* ---------- Contact ---------- */
+.cta-row{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:clamp(26px,3.4vw,42px);}
+.btn{
+  font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;
+  padding:15px 34px;border-radius:999px;
+  background:var(--glow);color:var(--white);border:1px solid var(--glow);
+  transition:transform .35s var(--ease),box-shadow .35s,background-color .3s,color .3s;
+}
+.btn:hover{transform:translateY(-3px);box-shadow:0 14px 34px rgba(46,139,87,.32);}
+.btn.ghost{background:transparent;color:var(--ink);border-color:var(--line);}
+.btn.ghost:hover{border-color:var(--glow);color:var(--glow);box-shadow:none;}
+
+/* ---------- Contact channels ---------- */
+/* Out of the flow until opened: the stage is vertically centred, so a hidden
+   but present block would push the heading up. Going from display:none to
+   flex lets the entrance animation run on the change; closing is immediate,
+   which is what a fold-away wants anyway. */
+.ways{display:none;}
+.ways.is-open{
+  display:flex;flex-direction:column;align-items:center;
+  gap:clamp(12px,1.4vw,16px);margin-top:clamp(18px,2.4vw,28px);
+  animation:waysIn .55s var(--ease) both;
+}
+.ways-row{display:flex;gap:clamp(10px,1.2vw,16px);flex-wrap:wrap;justify-content:center;}
+.way{
+  width:46px;height:46px;border-radius:50%;flex:none;
+  display:flex;align-items:center;justify-content:center;
+  color:var(--ink);border:1px solid var(--line);
+  transition:transform .35s var(--ease),border-color .35s,background-color .3s,color .3s;
+}
+.way svg{width:20px;height:20px;display:block;}
+.way:hover{transform:translateY(-3px);border-color:var(--glow);background:var(--glow);color:var(--white);}
+.ways-num{
+  font-family:var(--mono);font-size:12px;letter-spacing:.18em;
+  color:var(--glow);white-space:nowrap;
+}
+.ways-num:hover{color:var(--ink);}
+@keyframes waysIn{from{opacity:0;transform:translateY(12px);}to{opacity:1;transform:none;}}
+
+/* =========================================================
+   Responsive
+   ========================================================= */
+/* 900px is shared with SMALL in js/main.js -- keep the two in step. */
+@media (max-width:900px){
+  .nav{
+    position:fixed;inset:0 0 0 auto;width:min(78vw,320px);
+    flex-direction:column;justify-content:center;gap:26px;
+    background:var(--deep);padding:var(--pad);
+    transform:translateX(100%);transition:transform .5s var(--ease);
+    z-index:305;
+  }
+  .nav.open{transform:none;}
+  .nav a{font-size:13px;}
+  .pill{display:none;}
+  .burger{display:flex;}
+  .burger.open span:nth-child(1){transform:translateY(6.5px) rotate(45deg);}
+  .burger.open span:nth-child(2){opacity:0;}
+  .burger.open span:nth-child(3){transform:translateY(-6.5px) rotate(-45deg);}
+  .quotes{grid-template-columns:1fr;max-width:none;}
+  .stage{padding-top:calc(var(--pad) + 92px);}
+  .brand{margin-left:0;}
+  /* Below this width the hero text fills the row, so the lamp moves above it
+     rather than beside it — its glow would otherwise wash over the headline. */
+  /* Beside the headline, not above it. Explicit box (the container is
+     full-height on desktop, so a -50% Y translate would lift it off-screen),
+     tucked to the right and layered behind the type so the wordmark stays
+     legible where they overlap. */
+  .hero-lamp{
+    left:auto;right:0;
+    top:34%;height:264px;width:150px;
+    transform:none;
+    z-index:1;
+  }
+  .lamp-cord{height:7%;}
+  .lamp-body{top:7%;}
+  /* Text stays visually above the bulb, but must not swallow the touch that
+     belongs to it: this layer sits over the lamp and is pure copy, nothing
+     interactive, so it is transparent to pointers. */
+  .stage-hero .stage-inner{position:relative;z-index:3;pointer-events:none;}
+  /* lighter blurs: these are the expensive part on a phone */
+  .lamp-core{filter:blur(8px);}
+  .lamp-halo{filter:blur(16px);}
+  .lamp-cast{display:none;}
+}
+@media (max-width:560px){
+  /* a 42px marker plus a 14px gutter eats a phone's width, so the
+     marker shrinks and the spine follows it */
+  .steps{--step-dot:34px;}
+  .steps li{gap:0 14px;}
+  .steps p{font-size:13.5px;}
+  .body-copy{font-size:15px;}
+  .scard{flex-basis:76vw;}
+  .chip{border-radius:11px;}
+  .hero-lamp{width:124px;height:218px;top:36%;right:0;}
+  .scard-art{width:104px;opacity:.15;}
+}
+
+/* =========================================================
+   Meeting request modal
+   Reuses the page's tokens (--glow, --ink, --deep, --mono, --ease) so it
+   reads as part of the site rather than a bolted-on form.
+   ========================================================= */
+.mreq{
+  position:fixed;inset:0;z-index:950;
+  display:flex;align-items:center;justify-content:center;
+  padding:clamp(12px,3vw,40px);
+}
+.mreq[hidden]{display:none;}
+.mreq-scrim{
+  position:absolute;inset:0;
+  background:rgba(4,14,10,.72);
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  opacity:0;transition:opacity .34s var(--ease);
+}
+.mreq.open .mreq-scrim{opacity:1;}
+.mreq-panel{
+  position:relative;
+  width:min(620px,100%);
+  max-height:min(92dvh,92vh);
+  overflow-y:auto;-webkit-overflow-scrolling:touch;
+  background:var(--deep);
+  border:1px solid color-mix(in srgb,var(--glow) 26%,transparent);
+  border-radius:20px;
+  padding:clamp(24px,3.4vw,44px);
+  box-shadow:0 40px 90px rgba(0,0,0,.55);
+  opacity:0;transform:translateY(18px) scale(.985);
+  transition:opacity .38s var(--ease),transform .38s var(--ease);
+}
+.mreq.open .mreq-panel{opacity:1;transform:none;}
+.mreq-x{
+  position:absolute;top:14px;right:14px;z-index:2;
+  width:38px;height:38px;border-radius:50%;
+  background:color-mix(in srgb,var(--ink) 7%,transparent);
+  border:1px solid color-mix(in srgb,var(--ink) 16%,transparent);
+  color:var(--ink);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition:background-color .3s,transform .3s var(--ease),border-color .3s;
+}
+.mreq-x svg{width:17px;height:17px;}
+.mreq-x:hover{background:var(--glow);border-color:var(--glow);transform:rotate(90deg);}
+
+.mreq-eyebrow{
+  font-family:var(--mono);font-size:10px;letter-spacing:.28em;text-transform:uppercase;
+  color:var(--glow);margin-bottom:10px;
+}
+.mreq-title{font-size:clamp(26px,3.6vw,40px);line-height:1;color:var(--ink);margin-bottom:clamp(20px,2.6vw,30px);}
+
+/* ---- fields ---- */
+.mf{margin-bottom:clamp(16px,2vw,22px);}
+.mf-label{
+  display:block;margin-bottom:9px;
+  font-family:var(--mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;
+  color:color-mix(in srgb,var(--ink) 72%,transparent);
+}
+.mf-label i{color:var(--glow);font-style:normal;}
+.mf-opt{text-transform:none;letter-spacing:.04em;opacity:.55;}
+.mf-input{
+  width:100%;
+  /* 16px keeps iOS from zooming the viewport on focus */
+  font-family:var(--sans);font-size:16px;color:var(--ink);
+  background:color-mix(in srgb,var(--ink) 6%,transparent);
+  border:1px solid color-mix(in srgb,var(--ink) 14%,transparent);
+  border-radius:11px;padding:13px 15px;
+  transition:border-color .28s,background-color .28s,box-shadow .28s;
+}
+.mf-input::placeholder{color:color-mix(in srgb,var(--ink) 34%,transparent);}
+.mf-input:focus{
+  outline:none;border-color:var(--glow);
+  background:color-mix(in srgb,var(--ink) 9%,transparent);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--glow) 18%,transparent);
+}
+.mf-area{resize:vertical;min-height:84px;line-height:1.5;}
+.mf-phone{display:flex;gap:9px;}
+.mf-code{
+  flex:0 0 auto;width:112px;
+  font-family:var(--mono);font-size:14px;color:var(--ink);
+  background:color-mix(in srgb,var(--ink) 6%,transparent);
+  border:1px solid color-mix(in srgb,var(--ink) 14%,transparent);
+  border-radius:11px;padding:13px 10px;cursor:pointer;
+}
+.mf-code option{background:var(--deep);color:var(--ink);}
+.mf-code:focus{outline:none;border-color:var(--glow);}
+
+.mf-err{
+  margin-top:7px;font-family:var(--mono);font-size:10px;letter-spacing:.08em;
+  color:#FF9C8A;opacity:0;transition:opacity .2s;
+}
+.mf-err.on{opacity:1;}
+.mf.invalid .mf-input,.mf.invalid .mf-code{border-color:#FF9C8A;}
+
+/* ---- service chips ---- */
+.mf-chips{display:flex;flex-wrap:wrap;gap:8px;}
+.mchip{position:relative;cursor:pointer;}
+.mchip input{position:absolute;opacity:0;width:0;height:0;}
+.mchip span{
+  display:block;
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
+  color:color-mix(in srgb,var(--ink) 70%,transparent);
+  border:1px solid color-mix(in srgb,var(--ink) 16%,transparent);
+  border-radius:999px;padding:10px 15px;
+  transition:border-color .25s,background-color .25s,color .25s;
+}
+.mchip:hover span{border-color:color-mix(in srgb,var(--glow) 60%,transparent);color:var(--ink);}
+.mchip input:checked + span{
+  background:var(--glow);border-color:var(--glow);color:#fff;
+}
+.mchip input:focus-visible + span{outline:2px solid var(--ink);outline-offset:2px;}
+
+/* ---- calendar ---- */
+.cal{
+  border:1px solid color-mix(in srgb,var(--ink) 13%,transparent);
+  border-radius:13px;padding:13px;
+  background:color-mix(in srgb,var(--ink) 4%,transparent);
+}
+.cal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px;}
+.cal-month{
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink);
+}
+.cal-nav{
+  width:32px;height:32px;border-radius:9px;cursor:pointer;
+  background:transparent;border:1px solid color-mix(in srgb,var(--ink) 15%,transparent);
+  color:var(--ink);display:flex;align-items:center;justify-content:center;
+  transition:border-color .25s,background-color .25s,opacity .25s;
+}
+.cal-nav svg{width:15px;height:15px;}
+.cal-nav:hover:not(:disabled){border-color:var(--glow);background:color-mix(in srgb,var(--glow) 16%,transparent);}
+.cal-nav:disabled{opacity:.28;cursor:not-allowed;}
+.cal-dow,.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
+.cal-dow{margin-bottom:5px;}
+.cal-dow span{
+  text-align:center;font-family:var(--mono);font-size:9px;letter-spacing:.1em;
+  color:color-mix(in srgb,var(--ink) 40%,transparent);
+}
+.cal-day{
+  aspect-ratio:1;min-height:36px;
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:12.5px;color:var(--ink);
+  background:transparent;border:1px solid transparent;border-radius:9px;cursor:pointer;
+  transition:background-color .2s,border-color .2s,color .2s;
+}
+.cal-day:hover:not(:disabled){border-color:color-mix(in srgb,var(--glow) 55%,transparent);}
+.cal-day:disabled{color:color-mix(in srgb,var(--ink) 22%,transparent);cursor:not-allowed;}
+.cal-day.today{border-color:color-mix(in srgb,var(--ink) 26%,transparent);}
+.cal-day.sel{background:var(--glow);border-color:var(--glow);color:#fff;}
+.cal-day.blank{cursor:default;}
+
+/* ---- submit + states ---- */
+.mreq-submit{
+  width:100%;margin-top:6px;cursor:pointer;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.2em;text-transform:uppercase;
+  color:#fff;background:var(--glow);border:1px solid var(--glow);
+  border-radius:999px;padding:16px 24px;
+  display:flex;align-items:center;justify-content:center;gap:10px;
+  transition:transform .3s var(--ease),box-shadow .3s,opacity .3s;
+}
+.mreq-submit:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 14px 30px color-mix(in srgb,var(--glow) 36%,transparent);}
+.mreq-submit:disabled{opacity:.72;cursor:progress;transform:none;box-shadow:none;}
+.mreq-submit.ghost{background:transparent;color:var(--ink);border-color:color-mix(in srgb,var(--ink) 22%,transparent);}
+.mreq-submit.ghost:hover{border-color:var(--glow);box-shadow:none;}
+.mreq-spin{
+  width:15px;height:15px;border-radius:50%;display:none;
+  border:2px solid rgba(255,255,255,.35);border-top-color:#fff;
+  animation:mspin .7s linear infinite;
+}
+.mreq-submit.busy .mreq-spin{display:block;}
+@keyframes mspin{to{transform:rotate(360deg);}}
+.mreq-note{
+  margin-top:12px;text-align:center;
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;line-height:1.7;
+  color:color-mix(in srgb,var(--ink) 45%,transparent);
+}
+.mreq-note.err{color:#FF9C8A;}
+
+.mreq-done{text-align:center;padding:clamp(14px,3vw,30px) 0;}
+.mreq-tick{
+  width:62px;height:62px;margin:0 auto 20px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  color:var(--glow);border:1.5px solid var(--glow);
+  background:color-mix(in srgb,var(--glow) 12%,transparent);
+}
+.mreq-tick svg{width:27px;height:27px;}
+.mreq-done-title{font-size:clamp(24px,3vw,32px);color:var(--ink);margin-bottom:12px;}
+.mreq-done-copy{
+  font-size:14.5px;line-height:1.65;max-width:42ch;margin:0 auto 24px;
+  color:color-mix(in srgb,var(--ink) 66%,transparent);
+}
+
+@media (max-width:640px){
+  .mreq{padding:0;}
+  .mreq-panel{
+    width:100%;max-height:100dvh;height:100dvh;border-radius:0;border:0;
+    padding:60px 20px calc(28px + env(safe-area-inset-bottom));
+  }
+  .mreq-x{position:fixed;top:12px;right:12px;}
+  .mf-chips{gap:7px;}
+  .mchip span{padding:11px 14px;}
+  .cal-day{min-height:40px;}
+  .mf-code{width:100px;}
+}
+
+@media (prefers-reduced-motion:reduce){
+  .mreq-scrim,.mreq-panel{transition:none;}
+  .mreq-spin{animation:none;}
+}
+/* =========================================================
+   Reduced motion — fall back to a plain, readable document
+   ========================================================= */
+@media (prefers-reduced-motion:reduce){
+  .driver{display:none;}
+  #ribbon{display:none;}
+  .loader,.intro{display:none;}
+  .stagewrap{position:static;pointer-events:auto;}
+  .stage{
+    position:static;opacity:1!important;visibility:visible!important;
+    pointer-events:auto;transform:none!important;
+    min-height:auto;padding:72px var(--pad);
+  }
+  [data-anim],.display .ln i{opacity:1!important;transform:none!important;transition:none!important;}
+  .ways.is-open{animation:none;}
+  .steps li{opacity:1;translate:none;transform:none;}
+  .steps li::before,.step-n{transition:none;}
+  .chrome-top,.chrome-bottom{position:static;opacity:1;transform:none;}
+  .chrome-top{background:var(--deep);}
+  .rail{flex-wrap:wrap;padding-left:0;transform:none!important;}
+  .scard{flex-basis:280px;}
+  .scard-art{transition:none;}
+  /* Reduced motion removes the movement, not the feedback: the card still
+     changes colour, still reveals its photograph and still fills the arrow,
+     it just does not slide or lift while doing it. */
+  .scard{transition:border-color .2s linear,box-shadow .2s linear;}
+  .scard:hover,.scard.is-active,.scard:active{translate:none;scale:none;}
+  .scard::before,.scard::after,.scard-shot,
+  .scard-num::after,.scard-go-arrow,.scard-go-arrow svg{transition:none;}
+  .scard:hover .scard-go-arrow,.scard.is-active .scard-go-arrow{transform:none;}
+  .scard:hover .scard-art,.scard.is-active .scard-art{transform:none;}
+  /* no drift: let the logos wrap into a static wall instead */
+  .ticker{width:auto;-webkit-mask-image:none;mask-image:none;}
+  .ticker-row{flex-wrap:wrap;width:auto;justify-content:center;transform:none!important;}
+  .ticker-row:nth-child(2){display:none;}
+  /* A wrapped wall has no seam to hide, so show the roster once: eight cards,
+     not the four passes the drifting version needs to fill a wide screen. */
+  .ticker-row .chip:nth-child(n+9){display:none;}
+  body{background:var(--deep);}
+}
+
+/* the one way into the work gallery from the stage experience */
+.clients-work-link{
+  display:inline-block;margin-top:18px;
+  font-family:var(--mono);font-size:11px;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--ink);text-decoration:none;
+  border-bottom:1px solid currentColor;padding-bottom:4px;opacity:.82;
+  transition:opacity .3s var(--ease);
+}
+.clients-work-link:hover{opacity:1;}
