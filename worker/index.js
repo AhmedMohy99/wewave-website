@@ -467,11 +467,19 @@ export default {
       const denied = await requireAdmin(request, env);
       if (denied) return denied;
       if (path === '/api/meetings' && request.method === 'GET') {
-        return listMeetings(request, env);
+        try { return await listMeetings(request, env); }
+        catch (e) {
+          console.error('meeting list failed: ' + (e && e.message));
+          return json({ error: 'Meeting storage is temporarily unavailable.' }, 503);
+        }
       }
       const m = path.match(/^\/api\/meetings\/([A-Za-z0-9-]{6,40})$/);
       if (m && request.method === 'PATCH') {
-        return updateMeeting(request, env, m[1]);
+        try { return await updateMeeting(request, env, m[1]); }
+        catch (e) {
+          console.error('meeting update failed: ' + (e && e.message));
+          return json({ error: 'Meeting storage is temporarily unavailable.' }, 503);
+        }
       }
     }
 
