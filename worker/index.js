@@ -26,7 +26,7 @@
  */
 
 import { collect as collectAnalytics, query as queryAnalytics, ensureSchema as ensureAnalyticsSchema } from './analytics.js';
-import { handle as handleCases } from './case-studies.js';
+import { handle as handleCases, ensureSchema as ensureCaseStudySchema } from './case-studies.js';
 
 const MAX_BODY = 16 * 1024;          /* a booking request is ~1KB; anything larger is abuse */
 const STATUSES = ['new', 'contacted', 'booked', 'archived'];
@@ -398,7 +398,7 @@ export default {
       if (denied) return denied;
       let db = 'down';
       let tables = [];
-      const requiredTables = ['meetings', 'submit_log', 'a_event', 'a_session'];
+      const requiredTables = ['meetings', 'submit_log', 'a_event', 'a_session', 'case_study'];
       try {
         if (!env.DB) {
           db = 'unbound';
@@ -408,8 +408,9 @@ export default {
              idempotent and preserve existing records. */
           await ensureCoreSchema(env);
           await ensureAnalyticsSchema(env);
+          await ensureCaseStudySchema(env);
           const found = await env.DB.prepare(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('meetings','submit_log','a_event','a_session') ORDER BY name"
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('meetings','submit_log','a_event','a_session','case_study') ORDER BY name"
           ).all();
           tables = (found.results || []).map(row => row.name);
           db = requiredTables.every(name => tables.includes(name)) ? 'up' : 'schema_incomplete';
