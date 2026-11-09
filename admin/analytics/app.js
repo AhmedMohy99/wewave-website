@@ -109,6 +109,48 @@ function barRows(rows, keyName, valName, total) {
    ============================================================ */
 const views = {};
 
+views.meetings = async () => {
+  const d = await api('/api/meetings');
+  const rows = (d.meetings || []).map(m => {
+    const services = Array.isArray(m.services) ? m.services : [];
+    const brand = String(m.brand_link || '');
+    const brandHtml = (brand.startsWith('https://') || brand.startsWith('http://'))
+      ? '<a href="' + esc(brand) + '" target="_blank" rel="noopener noreferrer">' + esc(brand) + '</a>'
+      : esc(brand);
+    return '<tr class="meeting-row" data-id="' + esc(m.id) + '" data-status="' + esc(m.status) + '">' +
+      '<td><b>' + esc(m.name) + '</b><div class="hm-note">' + esc(new Date(m.created_at).toLocaleString()) + '</div></td>' +
+      '<td>' + esc(m.phone) + '<div class="hm-note">' + brandHtml + '</div></td>' +
+      '<td>' + esc(services.join(', ')) + '<div class="hm-note">' + esc(m.meeting_date) + '</div></td>' +
+      '<td>' + esc(m.message || '—') + '</td>' +
+      '<td><select data-meeting-status>' +
+        ['new','contacted','booked','archived'].map(s => '<option value="' + s + '"' + (m.status === s ? ' selected' : '') + '>' + s + '</option>').join('') +
+      '</select></td>' +
+      '<td><input class="inp" data-meeting-note value="' + esc(m.notes || '') + '" placeholder="Internal note">' +
+        '<div class="hm-note" data-save-state></div></td>' +
+    '</tr>';
+  }).join('');
+  const counts = d.counts || {};
+  const total = Object.values(counts).reduce((a, b) => a + Number(b || 0), 0);
+  return '<div class="grid kpis" style="margin-bottom:12px">' +
+    '<div class="card kpi"><h3>Total requests</h3><div class="v">' + nf(total) + '</div></div>' +
+    '<div class="card kpi"><h3>New</h3><div class="v">' + nf(counts.new || 0) + '</div></div>' +
+    '<div class="card kpi"><h3>Contacted</h3><div class="v">' + nf(counts.contacted || 0) + '</div></div>' +
+    '<div class="card kpi"><h3>Booked</h3><div class="v">' + nf(counts.booked || 0) + '</div></div>' +
+  '</div>' +
+  '<div class="card">' +
+    '<div class="hm-controls">' +
+      '<input class="inp" id="meetingSearch" placeholder="Search name, phone, brand or message" style="max-width:340px">' +
+      '<select id="meetingFilter"><option value="all">All statuses</option>' +
+        ['new','contacted','booked','archived'].map(s => '<option value="' + s + '">' + s + '</option>').join('') +
+      '</select>' +
+      '<button class="btn sm ghost" id="meetingReload">Refresh</button>' +
+    '</div>' +
+    (rows ? '<div style="overflow:auto"><table><thead><tr><th>Contact</th><th>Phone / Brand</th><th>Services / Date</th><th>Message</th><th>Status</th><th>Internal note</th></tr></thead><tbody id="meetingRows">' + rows + '</tbody></table></div>'
+      : empty('No meeting requests have been submitted yet.')) +
+    '<p class="hm-note" id="meetingCount">' + nf(total) + ' requests · names and contact details are visible only to admins.</p>' +
+  '</div>';
+};
+
 views.overview = async () => {
   const d = await api('/api/a/overview');
   const k = d.kpi;
@@ -488,7 +530,7 @@ async function render() {
   const el = $('#view');
   el.innerHTML = '<div class="loading">Loading…</div>';
   $('#title').textContent = ({
-    overview: 'Overview', heatmaps: 'Heatmaps', sessions: 'Sessions', pages: 'Pages',
+    overview: 'Overview', meetings: 'Meetings', heatmaps: 'Heatmaps', sessions: 'Sessions', pages: 'Pages',
     conversions: 'Conversions', sources: 'Traffic sources', devices: 'Devices',
     events: 'Events', settings: 'Settings'
   })[view] || 'Overview';
@@ -509,8 +551,70 @@ async function render() {
   }
 
   if (view === 'sessions') {
-    $$('tr.clickable').forEach(tr =>
+    $('tr.clickable').forEach(tr =>
       tr.addEventListener('click', () => sessionDetail(tr.dataset.sid).catch(() => {})));
+  }
+
+  if (view === 'meetings') {
+    const applyMeetingFilters = () => {
+      const q = ($('#meetingSearch')?.value || '').trim().toLowerCase();
+      const status = $('#meetingFilter')?.value || 'all';
+      const rows = $('#meetingRows tr');
+      let shown = 0;
+      rows.forEach(tr => {
+        const visible = (status === 'all' || tr.dataset.status === status) &&
+          (!q || tr.textContent.toLowerCase().includes(q));
+        tr.hidden = !visible;
+        if (visible) shown++;
+      });
+      const count = $('#meetingCount');
+      if (count) count.textContent = shown + ' of ' + rows.length + ' requests';
+    };
+    $('#meetingSearch')?.addEventListener('input', applyMeetingFilters);
+    $('#meetingFilter')?.addEventListener('change', applyMeetingFilters);
+    $('#meetingReload')?.addEventListener('click', () => render());
+    $('#meetingRows tr').forEach(tr => {
+      const id = tr.dataset.id;
+      const state = $('[data-save-state]', tr);
+      const patch = async body => {
+        const r = await fetch('/api/meetings/' + encodeURIComponent(id), {
+          method: 'PATCH',
+          headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        if (r.status === 401) throw new Error('unauthorised');
+        if (!r.ok) throw new Error('save failed (' + r.status + ')');
+      };
+      $('[data-meeting-status]', tr)?.addEventListener('change', async e => {
+        state.textContent = 'Saving…';
+        try {
+          await patch({ status: e.target.value });
+          tr.dataset.status = e.target.value;
+          state.textContent = 'Saved';
+          applyMeetingFilters();
+        } catch (err) {
+          state.textContent = 'Could not save';
+          if (err.message === 'unauthorised') lock('That token was not accepted.');
+        }
+      });
+      let noteTimer;
+      $('[data-meeting-note]', tr)?.addEventListener('input', e => {
+        clearTimeout(noteTimer);
+        const value = e.target.value;
+        state.textContent = 'Unsaved';
+        noteTimer = setTimeout(async () => {
+          state.textContent = 'Saving…';
+          try {
+            await patch({ notes: value });
+            state.textContent = 'Saved';
+          } catch (err) {
+            state.textContent = 'Could not save';
+            if (err.message === 'unauthorised') lock('That token was not accepted.');
+          }
+        }, 700);
+      });
+    });
+    applyMeetingFilters();
   }
 
   if (view === 'overview') refreshFeed();

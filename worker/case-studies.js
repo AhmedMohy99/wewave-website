@@ -32,7 +32,7 @@ const json = (data, status = 200) =>
 
 let ensured = false;   /* per-isolate: the DDL runs once, not per request */
 
-async function ensureSchema(env) {
+export async function ensureSchema(env) {
   if (ensured) return;
   await env.DB.batch([
     env.DB.prepare(

@@ -25,8 +25,8 @@
  *   LEAD_WEBHOOK_URL  optional — where to announce a new lead; see notifyLead
  */
 
-import { collect as collectAnalytics, query as queryAnalytics } from './analytics.js';
-import { handle as handleCases } from './case-studies.js';
+import { collect as collectAnalytics, query as queryAnalytics, ensureSchema as ensureAnalyticsSchema } from './analytics.js';
+import { handle as handleCases, ensureSchema as ensureCaseStudySchema } from './case-studies.js';
 
 const MAX_BODY = 16 * 1024;          /* a booking request is ~1KB; anything larger is abuse */
 const STATUSES = ['new', 'contacted', 'booked', 'archived'];
@@ -122,8 +122,9 @@ async function ensureCoreSchema(env) {
     ]);
     coreReady = true;
   } catch (e) {
-    /* Leave coreReady false so the next request tries again. */
+    /* Do not silently report readiness when the schema could not be created. */
     console.error('core schema check failed: ' + (e && e.message));
+    throw e;
   }
 }
 
@@ -330,6 +331,7 @@ async function createMeeting(request, env, ctx) {
 }
 
 async function listMeetings(request, env) {
+  await ensureCoreSchema(env);
   const url = new URL(request.url);
   const status = url.searchParams.get('status');
   const limit = Math.min(Number(url.searchParams.get('limit')) || 200, 500);
@@ -350,6 +352,7 @@ async function listMeetings(request, env) {
 }
 
 async function updateMeeting(request, env, id) {
+  await ensureCoreSchema(env);
   let body;
   try { body = await request.json(); }
   catch { return json({ error: 'Expected JSON.' }, 400); }
@@ -394,11 +397,37 @@ export default {
       const denied = await requireAdmin(request, env);
       if (denied) return denied;
       let db = 'down';
+      let tables = [];
+      const requiredTables = ['meetings', 'submit_log', 'a_event', 'a_session', 'case_study'];
       try {
-        if (env.DB) { await env.DB.prepare('SELECT 1 AS ok').first(); db = 'up'; }
-        else db = 'unbound';
-      } catch { db = 'down'; }
-      return json({ ok: db === 'up', db, time: new Date().toISOString() }, db === 'up' ? 200 : 503);
+        if (!env.DB) {
+          db = 'unbound';
+        } else {
+          /* Readiness means both product areas have working schemas, not merely
+             that the D1 binding answers SELECT 1. These initializers are
+             idempotent and preserve existing records. */
+          await ensureCoreSchema(env);
+          await ensureAnalyticsSchema(env);
+          await ensureCaseStudySchema(env);
+          const found = await env.DB.prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('meetings','submit_log','a_event','a_session','case_study') ORDER BY name"
+          ).all();
+          tables = (found.results || []).map(row => row.name);
+          db = requiredTables.every(name => tables.includes(name)) ? 'up' : 'schema_incomplete';
+        }
+      } catch (e) {
+        console.error('deep health check failed: ' + (e && e.message));
+        db = 'down';
+      }
+      const schemaReady = requiredTables.every(name => tables.includes(name));
+      return json({
+        ok: db === 'up',
+        db,
+        schemaReady,
+        tables,
+        requiredTables,
+        time: new Date().toISOString()
+      }, db === 'up' ? 200 : 503);
     }
 
     /* Analytics ingest — public, like the booking form. It answers 204 on any
@@ -438,11 +467,19 @@ export default {
       const denied = await requireAdmin(request, env);
       if (denied) return denied;
       if (path === '/api/meetings' && request.method === 'GET') {
-        return listMeetings(request, env);
+        try { return await listMeetings(request, env); }
+        catch (e) {
+          console.error('meeting list failed: ' + (e && e.message));
+          return json({ error: 'Meeting storage is temporarily unavailable.' }, 503);
+        }
       }
       const m = path.match(/^\/api\/meetings\/([A-Za-z0-9-]{6,40})$/);
       if (m && request.method === 'PATCH') {
-        return updateMeeting(request, env, m[1]);
+        try { return await updateMeeting(request, env, m[1]); }
+        catch (e) {
+          console.error('meeting update failed: ' + (e && e.message));
+          return json({ error: 'Meeting storage is temporarily unavailable.' }, 503);
+        }
       }
     }
 

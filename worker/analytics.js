@@ -85,7 +85,7 @@ const clamp01 = (v) => (typeof v === 'number' && isFinite(v) ? Math.min(1, Math.
 
 let ensured = false;   /* per-isolate: the DDL runs once, not per request */
 
-async function ensureSchema(env) {
+export async function ensureSchema(env) {
   if (ensured) return;
   const stmts = [
     `CREATE TABLE IF NOT EXISTS a_event (
