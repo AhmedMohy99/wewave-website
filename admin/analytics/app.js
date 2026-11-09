@@ -114,7 +114,7 @@ views.meetings = async () => {
   const rows = (d.meetings || []).map(m => {
     const services = Array.isArray(m.services) ? m.services : [];
     const brand = String(m.brand_link || '');
-    const brandHtml = /^https?:\\/\\//i.test(brand)
+    const brandHtml = (brand.startsWith('https://') || brand.startsWith('http://'))
       ? '<a href="' + esc(brand) + '" target="_blank" rel="noopener noreferrer">' + esc(brand) + '</a>'
       : esc(brand);
     return '<tr class="meeting-row" data-id="' + esc(m.id) + '" data-status="' + esc(m.status) + '">' +
