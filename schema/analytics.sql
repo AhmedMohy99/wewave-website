@@ -62,7 +62,9 @@ CREATE TABLE IF NOT EXISTS a_session (
   utm_campaign TEXT,
   utm_content  TEXT,
   utm_term     TEXT,
-  is_test      INTEGER NOT NULL DEFAULT 0
+  is_test      INTEGER NOT NULL DEFAULT 0,
+  engaged_ms   INTEGER NOT NULL DEFAULT 0, -- visible and recently active time, milliseconds
+  ua           TEXT                         -- truncated user-agent for coarse diagnostics
 );
 
 CREATE INDEX IF NOT EXISTS idx_a_session_started ON a_session (started_at);
