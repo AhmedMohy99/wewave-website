@@ -14,7 +14,7 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "wewave-meetings",
+      "database_name": "wewave",
       "database_id": "8c879b53-791a-41b2-b141-103ca315ffe5"
     }
   ],
