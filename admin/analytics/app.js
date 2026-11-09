@@ -551,7 +551,7 @@ async function render() {
   }
 
   if (view === 'sessions') {
-    $('tr.clickable').forEach(tr =>
+    $$('tr.clickable').forEach(tr =>
       tr.addEventListener('click', () => sessionDetail(tr.dataset.sid).catch(() => {})));
   }
 
@@ -559,7 +559,7 @@ async function render() {
     const applyMeetingFilters = () => {
       const q = ($('#meetingSearch')?.value || '').trim().toLowerCase();
       const status = $('#meetingFilter')?.value || 'all';
-      const rows = $('#meetingRows tr');
+      const rows = $$('#meetingRows tr');
       let shown = 0;
       rows.forEach(tr => {
         const visible = (status === 'all' || tr.dataset.status === status) &&
@@ -573,7 +573,7 @@ async function render() {
     $('#meetingSearch')?.addEventListener('input', applyMeetingFilters);
     $('#meetingFilter')?.addEventListener('change', applyMeetingFilters);
     $('#meetingReload')?.addEventListener('click', () => render());
-    $('#meetingRows tr').forEach(tr => {
+    $$('#meetingRows tr').forEach(tr => {
       const id = tr.dataset.id;
       const state = $('[data-save-state]', tr);
       const patch = async body => {
